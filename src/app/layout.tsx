@@ -14,24 +14,24 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  title: "AuthVerify — Counterfeit Detection Co-Pilot",
+  description: "Scan any branded product or medicine with your phone camera. AuthVerify checks for counterfeit red flags and compares against genuine references from the web. Africa-first, global reach.",
+  keywords: ["counterfeit detection", "fake medicine", "NAFDAC", "product authenticity", "anti-counterfeit", "Africa", "consumer protection"],
+  authors: [{ name: "AuthVerify" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "AuthVerify — Counterfeit Detection Co-Pilot",
+    description: "Scan any product. Get an honest verdict on whether it's authentic or fake.",
     url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    siteName: "AuthVerify",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "AuthVerify — Counterfeit Detection Co-Pilot",
+    description: "Scan any product. Get an honest verdict on whether it's authentic or fake.",
   },
 };
 
