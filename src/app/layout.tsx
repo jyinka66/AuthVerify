@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,8 +19,10 @@ export const metadata: Metadata = {
   description: "Scan any branded product or medicine with your phone camera. AuthVerify checks for counterfeit red flags and compares against genuine references from the web. Africa-first, global reach.",
   keywords: ["counterfeit detection", "fake medicine", "NAFDAC", "product authenticity", "anti-counterfeit", "Africa", "consumer protection"],
   authors: [{ name: "AuthVerify" }],
+  manifest: "/manifest.json",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: "/icon.svg",
   },
   openGraph: {
     title: "AuthVerify — Counterfeit Detection Co-Pilot",
@@ -35,6 +38,14 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport = {
+  themeColor: "#f59e0b",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -47,6 +58,7 @@ export default function RootLayout({
       >
         {children}
         <Toaster />
+        <ServiceWorkerRegister />
       </body>
     </html>
   );

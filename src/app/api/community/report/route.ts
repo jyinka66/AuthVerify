@@ -12,6 +12,31 @@ interface ReportBody {
   deviceFingerprint?: string
 }
 
+/**
+ * Broadcast the alert to the community-alert mini-service (socket.io on
+ * port 3003, internal HTTP endpoint on port 3004). Server-to-server call
+ * on localhost — does not go through the gateway.
+ */
+async function broadcastAlert(payload: {
+  brand: string
+  productName?: string
+  region?: string
+  details?: string
+}): Promise<void> {
+  try {
+    await fetch('http://localhost:3004/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    })
+  } catch (err) {
+    // The alert service may not be running — log and continue without failing
+    // the report submission. The report is still saved (if Supabase is up).
+    console.error('[community/report] broadcast failed:', err)
+  }
+}
+
 export async function POST(req: NextRequest) {
   let body: ReportBody
   try {
@@ -24,13 +49,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Brand is required' }, { status: 400 })
   }
 
+  // Always broadcast the alert (even if Supabase isn't configured) so that
+  // connected clients in the same region see real-time alerts.
+  await broadcastAlert({
+    brand: body.brand.trim(),
+    productName: body.productName?.trim() || undefined,
+    region: body.region,
+    details: body.details?.trim() || undefined,
+  })
+
   if (!isSupabaseConfigured()) {
-    // Accept the report locally so the UX works even without a backend.
     return NextResponse.json({
       ok: true,
       persisted: false,
       usingLocalStore: true,
-      message: 'Report recorded locally. Connect Supabase to share with the community.',
+      broadcast: true,
+      message: 'Report broadcast to nearby users. Connect Supabase to persist for the community.',
     })
   }
 
@@ -51,5 +85,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to save report' }, { status: 500 })
   }
 
-  return NextResponse.json({ ok: true, id, persisted: true, usingLocalStore: false })
+  return NextResponse.json({ ok: true, id, persisted: true, usingLocalStore: false, broadcast: true })
 }

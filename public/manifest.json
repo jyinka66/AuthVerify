@@ -1,0 +1,24 @@
+{
+  "name": "AuthVerify — Counterfeit Detection Co-Pilot",
+  "short_name": "AuthVerify",
+  "description": "Scan any branded product or medicine. Get an honest verdict on whether it's authentic or fake. Africa-first, global reach.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#09090b",
+  "theme_color": "#f59e0b",
+  "categories": ["shopping", "utilities", "health"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug } from 'lucide-react'
+import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug, Bell } from 'lucide-react'
 import { CameraView } from '@/components/scan/camera-view'
 import { PhotoCapture } from '@/components/scan/photo-capture'
 import { CategoryPicker } from '@/components/scan/category-picker'
@@ -13,6 +13,8 @@ import { CommunityReportForm } from '@/components/scan/community-report-form'
 import { BarcodeScanner } from '@/components/scan/barcode-scanner'
 import { BarcodeResultSheet } from '@/components/scan/barcode-result-sheet'
 import { ScannerWizard } from '@/components/hardware/scanner-wizard'
+import { AlertsFeed } from '@/components/scan/alerts-feed'
+import { AuthButton } from '@/components/auth/auth-button'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -24,11 +26,18 @@ import type {
 import { quickScan, deepCompare, listHistory, deleteScan, lookupProduct, type ProductLookupResponse } from '@/lib/scan/api-client'
 import { listLocalScans, saveLocalScan, deleteLocalScan, isUsingLocalStore } from '@/lib/scan/store-local'
 import { getDeviceFingerprint, detectRegion } from '@/lib/scan/device'
+import { useCommunityAlerts } from '@/hooks/use-community-alerts'
 import { useToast } from '@/hooks/use-toast'
 
 type Screen = 'capture' | 'analyzing' | 'result'
 
 export default function Home() {
+  const { toast } = useToast()
+
+  // Device identity (declared early — region feeds the alerts hook).
+  const [deviceFingerprint, setDeviceFingerprint] = useState<string>('anon')
+  const [region, setRegion] = useState<string | undefined>(undefined)
+
   const [mode, setMode] = useState<ScanMode>('quick')
   const [category, setCategory] = useState<ProductCategory | null>(null)
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
@@ -52,16 +61,14 @@ export default function Home() {
     error?: string
   }>({ loading: false })
 
+  // Community counterfeit alerts (real-time via socket.io).
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const { connected: alertsConnected, alerts, dismissAlert, clearAlerts } = useCommunityAlerts(region)
+
   // Deep Compare SSE progress.
   const [deepProgress, setDeepProgress] = useState<DeepCompareProgress | null>(null)
   const [visibleStages, setVisibleStages] = useState<Set<DeepCompareProgress['stage']>>(new Set())
   const abortRef = useRef<AbortController | null>(null)
-
-  // Device identity (client-only).
-  const [deviceFingerprint, setDeviceFingerprint] = useState<string>('anon')
-  const [region, setRegion] = useState<string | undefined>(undefined)
-
-  const { toast } = useToast()
 
   // Init device fingerprint + region + history on mount.
   useEffect(() => {
@@ -87,6 +94,19 @@ export default function Home() {
         setHistory(listLocalScans())
       })
   }, [])
+
+  // Show a toast when a new community alert arrives.
+  const lastAlertCount = useRef(0)
+  useEffect(() => {
+    if (alerts.length > lastAlertCount.current && lastAlertCount.current !== 0) {
+      const latest = alerts[0]
+      toast({
+        title: 'Counterfeit alert nearby',
+        description: `${latest.brand}${latest.productName ? ` — ${latest.productName}` : ''} was reported as fake${latest.region ? ` in ${latest.region}` : ''}.`,
+      })
+    }
+    lastAlertCount.current = alerts.length
+  }, [alerts, toast])
 
   const resetToCapture = () => {
     setResult(null)
@@ -300,6 +320,7 @@ export default function Home() {
               Scanner
             </span>
           )}
+          <AuthButton />
           <Button
             variant="ghost"
             size="icon"
@@ -319,6 +340,24 @@ export default function Home() {
             title="Scan a product barcode with your camera"
           >
             <Barcode className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setAlertsOpen(true)}
+            className="relative text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            aria-label="Community alerts"
+            title="Community counterfeit alerts"
+          >
+            <Bell className="h-5 w-5" />
+            {alerts.length > 0 && (
+              <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                {alerts.length > 9 ? '9+' : alerts.length}
+              </span>
+            )}
+            {alertsConnected && alerts.length === 0 && (
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-zinc-950" />
+            )}
           </Button>
           <Button
             variant="ghost"
@@ -511,6 +550,16 @@ export default function Home() {
         barcode={scannedBarcode}
         lookup={barcodeLookup}
         onVerifyVisually={handleVerifyVisuallyFromBarcode}
+      />
+
+      {/* Community counterfeit alerts feed (real-time via socket.io) */}
+      <AlertsFeed
+        open={alertsOpen}
+        onOpenChange={setAlertsOpen}
+        connected={alertsConnected}
+        alerts={alerts}
+        onDismiss={dismissAlert}
+        onClear={clearAlerts}
       />
     </div>
   )
