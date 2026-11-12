@@ -66,6 +66,39 @@ interface WebSearchResult {
 // CLI invocations (image-search + web_search)
 // ---------------------------------------------------------------------------
 
+/**
+ * The z-ai CLI prints banner lines (e.g. "🚀 Initializing Z-AI SDK...")
+ * before and sometimes after the actual JSON output. This helper locates
+ * the first complete JSON value (object or array) using bracket matching
+ * and returns just that substring, ignoring any banners or trailing text.
+ */
+function extractFirstJson(stdout: string): string {
+  const start = stdout.search(/[{[]/)
+  if (start === -1) return stdout.trim()
+  const open = stdout[start]
+  const close = open === '{' ? '}' : ']'
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < stdout.length; i++) {
+    const ch = stdout[i]
+    if (inString) {
+      if (escaped) { escaped = false; continue }
+      if (ch === '\\') { escaped = true; continue }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === open) depth++
+    else if (ch === close) {
+      depth--
+      if (depth === 0) return stdout.slice(start, i + 1)
+    }
+  }
+  // No matching close found — return the raw slice and let JSON.parse fail loudly.
+  return stdout.slice(start).trim()
+}
+
 /** Run `z-ai image-search` and return parsed JSON. */
 export async function runImageSearch(
   query: string,
@@ -78,7 +111,8 @@ export async function runImageSearch(
       ['image-search', '-q', query, '-c', String(count), '--gl', region, '--no-rank'],
       { maxBuffer: CLI_BUFFER, timeout: 120000 }
     )
-    return JSON.parse(stdout) as ImageSearchResult
+    const json = extractFirstJson(stdout)
+    return JSON.parse(json) as ImageSearchResult
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[image-search] failed:', message)
@@ -94,7 +128,25 @@ export async function runWebSearch(query: string, num = 6): Promise<WebSearchRes
       ['function', '-n', 'web_search', '-a', JSON.stringify({ query, num })],
       { maxBuffer: CLI_BUFFER, timeout: 60000 }
     )
-    return JSON.parse(stdout) as WebSearchResult
+    const json = extractFirstJson(stdout)
+    // The web_search CLI returns a raw JSON array of {url, name, snippet, host_name, rank, date}.
+    // Normalize to our WebSearchResult shape.
+    const parsed = JSON.parse(json) as
+      | Array<{ url?: string; name?: string; snippet?: string; host_name?: string }>
+      | WebSearchResult
+
+    if (Array.isArray(parsed)) {
+      return {
+        success: true,
+        results: parsed.map((r) => ({
+          title: r.name,
+          url: r.url,
+          snippet: r.snippet,
+          source: r.host_name,
+        })),
+      }
+    }
+    return parsed
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[web_search] failed:', message)

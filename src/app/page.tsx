@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database } from 'lucide-react'
+import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug } from 'lucide-react'
 import { CameraView } from '@/components/scan/camera-view'
 import { PhotoCapture } from '@/components/scan/photo-capture'
 import { CategoryPicker } from '@/components/scan/category-picker'
@@ -10,6 +10,9 @@ import { ComparisonCard } from '@/components/scan/comparison-card'
 import { ProgressOverlay } from '@/components/scan/progress-overlay'
 import { ScanHistory } from '@/components/scan/scan-history'
 import { CommunityReportForm } from '@/components/scan/community-report-form'
+import { BarcodeScanner } from '@/components/scan/barcode-scanner'
+import { BarcodeResultSheet } from '@/components/scan/barcode-result-sheet'
+import { ScannerWizard } from '@/components/hardware/scanner-wizard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -18,7 +21,7 @@ import type {
   DeepCompareProgress,
   ScanMode,
 } from '@/lib/scan/types'
-import { quickScan, deepCompare, listHistory, deleteScan } from '@/lib/scan/api-client'
+import { quickScan, deepCompare, listHistory, deleteScan, lookupProduct, type ProductLookupResponse } from '@/lib/scan/api-client'
 import { listLocalScans, saveLocalScan, deleteLocalScan, isUsingLocalStore } from '@/lib/scan/store-local'
 import { getDeviceFingerprint, detectRegion } from '@/lib/scan/device'
 import { useToast } from '@/hooks/use-toast'
@@ -35,6 +38,19 @@ export default function Home() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [usingLocalStore, setUsingLocalStore] = useState(false)
+
+  // Barcode scanner (camera) + hardware scanner wizard.
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false)
+  const [scannerWizardOpen, setScannerWizardOpen] = useState(false)
+  const [hardwareConnected, setHardwareConnected] = useState(false)
+  const [scannedBarcode, setScannedBarcode] = useState<string | null>(null)
+  const [barcodeSheetOpen, setBarcodeSheetOpen] = useState(false)
+  const [barcodeLookup, setBarcodeLookup] = useState<{
+    loading: boolean
+    product?: ProductLookupResponse['product']
+    regulator?: ProductLookupResponse['regulator']
+    error?: string
+  }>({ loading: false })
 
   // Deep Compare SSE progress.
   const [deepProgress, setDeepProgress] = useState<DeepCompareProgress | null>(null)
@@ -175,6 +191,50 @@ export default function Home() {
     setReportOpen(true)
   }
 
+  // --- Barcode scan handler (shared by camera scanner + hardware scanner) ---
+  const handleBarcodeScan = async (code: string) => {
+    setBarcodeScannerOpen(false)
+    setScannedBarcode(code)
+    setBarcodeSheetOpen(true)
+    setBarcodeLookup({ loading: true })
+    try {
+      const res = await lookupProduct(code, region)
+      setBarcodeLookup({
+        loading: false,
+        product: res.product,
+        regulator: res.regulator,
+      })
+    } catch (err) {
+      setBarcodeLookup({
+        loading: false,
+        error: err instanceof Error ? err.message : 'Lookup failed.',
+      })
+    }
+  }
+
+  // --- After barcode lookup: pre-fill category + brand and switch to visual verification ---
+  const handleVerifyVisuallyFromBarcode = () => {
+    if (barcodeLookup.product) {
+      // Best-effort category inference from the lookup category text.
+      const cat = (barcodeLookup.product.category ?? '').toLowerCase()
+      let inferred: ProductCategory | null = null
+      if (cat.includes('medic') || cat.includes('pharma')) inferred = 'medicine_otc'
+      else if (cat.includes('cosmetic') || cat.includes('beauty')) inferred = 'cosmetic'
+      else if (cat.includes('beverage') || cat.includes('drink')) inferred = 'beverage'
+      else if (cat.includes('food') || cat.includes('snack')) inferred = 'packaged_food'
+      else if (cat.includes('electronic')) inferred = 'electronics_accessory'
+      if (inferred) setCategory(inferred)
+    }
+    setBarcodeSheetOpen(false)
+    resetToCapture()
+  }
+
+  // Track hardware scanner connection status for the header badge.
+  const handleHardwareScan = (code: string) => {
+    setHardwareConnected(true)
+    handleBarcodeScan(code)
+  }
+
   const analyzing = screen === 'analyzing'
   const showProgress = mode === 'deep' && analyzing && deepProgress
 
@@ -221,7 +281,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {usingLocalStore && (
             <span
               className="hidden items-center gap-1 rounded-full bg-zinc-900 px-2 py-1 text-[10px] text-zinc-400 sm:flex"
@@ -231,6 +291,35 @@ export default function Home() {
               Local
             </span>
           )}
+          {hardwareConnected && (
+            <span
+              className="hidden items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300 sm:flex"
+              title="Hardware barcode scanner connected"
+            >
+              <Plug className="h-3 w-3" />
+              Scanner
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setScannerWizardOpen(true)}
+            className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            aria-label="Connect hardware scanner"
+            title="Connect a USB or Bluetooth barcode scanner"
+          >
+            <Plug className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setBarcodeScannerOpen(true)}
+            className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            aria-label="Scan barcode with camera"
+            title="Scan a product barcode with your camera"
+          >
+            <Barcode className="h-5 w-5" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -399,6 +488,29 @@ export default function Home() {
         }}
         deviceFingerprint={deviceFingerprint}
         onSubmitted={resetToCapture}
+      />
+
+      {/* Camera barcode scanner */}
+      <BarcodeScanner
+        open={barcodeScannerOpen}
+        onOpenChange={setBarcodeScannerOpen}
+        onScan={handleBarcodeScan}
+      />
+
+      {/* Hardware scanner wizard (USB / Type-C / Bluetooth) */}
+      <ScannerWizard
+        open={scannerWizardOpen}
+        onOpenChange={setScannerWizardOpen}
+        onScan={handleHardwareScan}
+      />
+
+      {/* Barcode lookup result sheet */}
+      <BarcodeResultSheet
+        open={barcodeSheetOpen}
+        onOpenChange={setBarcodeSheetOpen}
+        barcode={scannedBarcode}
+        lookup={barcodeLookup}
+        onVerifyVisually={handleVerifyVisuallyFromBarcode}
       />
     </div>
   )

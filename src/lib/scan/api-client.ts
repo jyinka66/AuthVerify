@@ -134,3 +134,15 @@ export async function submitReport(params: {
   if (!res.ok) throw new Error('Failed to submit report')
   return res.json()
 }
+
+export interface ProductLookupResponse {
+  product: import('./barcode').BarcodeLookupResult
+  regulator: import('./regulators').RegulatorResult | null
+}
+
+export async function lookupProduct(barcode: string, country?: string): Promise<ProductLookupResponse> {
+  const url = `/api/product/lookup?barcode=${encodeURIComponent(barcode)}${country ? `&country=${encodeURIComponent(country)}` : ''}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error('Product lookup failed')
+  return res.json()
+}
