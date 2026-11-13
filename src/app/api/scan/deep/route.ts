@@ -9,6 +9,8 @@ import {
 } from '@/lib/scan/ai'
 import { ensureDevice, saveScan, getCachedReferences, cacheReferences } from '@/lib/scan/store-server'
 import { isSupabaseConfigured } from '@/lib/supabase/server'
+import { checkRateLimit, getClientIp, rateLimitHeaders, LIMITS } from '@/lib/scan/rate-limit'
+import { validateAndSanitizeImage, ImageValidationError } from '@/lib/scan/image-validation'
 import type {
   ProductCategory,
   ReferenceImage,
@@ -19,7 +21,7 @@ import type {
 import { randomUUID } from 'crypto'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300 // Deep compare can take a while (image-search is slow).
+export const maxDuration = 300
 
 interface DeepCompareBody {
   image: string
@@ -27,13 +29,6 @@ interface DeepCompareBody {
   category?: ProductCategory | null
   deviceFingerprint?: string
   region?: string
-}
-
-function parseImage(input: string, fallbackMime?: string): { base64: string; mimeType: string } {
-  const dataUrlMatch = input.match(/^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
-  if (dataUrlMatch) return { mimeType: dataUrlMatch[1], base64: dataUrlMatch[2] }
-  if (!fallbackMime) throw new Error('Missing mimeType for raw base64 image')
-  return { mimeType: fallbackMime, base64: input }
 }
 
 function buildSearchQuery(info: ExtractedInfo, category: ProductCategory | null): string {
@@ -44,7 +39,6 @@ function buildSearchQuery(info: ExtractedInfo, category: ProductCategory | null)
   if (parts.length === 0) {
     parts.push('genuine original branded product packaging')
   }
-  // Bias the query toward authentic reference imagery.
   const categoryHint = category === 'currency'
     ? 'official security features'
     : category?.startsWith('medicine')
@@ -58,6 +52,20 @@ function sseData(payload: DeepCompareProgress): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Rate limit check — Deep Compare is expensive, so limits are tighter.
+  const ip = getClientIp(req)
+  const deviceFp = req.headers.get('x-device-fingerprint') ?? 'anon'
+  const limit = checkRateLimit(deviceFp, ip, LIMITS.deep)
+  if (!limit.allowed) {
+    const message = limit.budgetExhausted
+      ? 'Daily verification budget exhausted. Please try again tomorrow.'
+      : 'Rate limit exceeded. Deep Compare is limited to 5 per hour.'
+    return new Response(
+      sseData({ stage: 'error', message }),
+      { status: 429, headers: { 'Content-Type': 'text/event-stream', ...rateLimitHeaders(limit) } }
+    )
+  }
+
   let body: DeepCompareBody
   try {
     body = (await req.json()) as DeepCompareBody
@@ -69,14 +77,13 @@ export async function POST(req: NextRequest) {
     return new Response('Missing image', { status: 400 })
   }
 
-  let parsed
+  // Validate + sanitize the image.
+  let validated
   try {
-    parsed = parseImage(body.image, body.mimeType)
+    validated = await validateAndSanitizeImage(body.image, body.mimeType)
   } catch (err) {
-    return new Response(
-      err instanceof Error ? err.message : 'Invalid image',
-      { status: 400 }
-    )
+    const message = err instanceof ImageValidationError ? err.message : 'Image validation failed'
+    return new Response(message, { status: 400 })
   }
 
   const supabaseOn = isSupabaseConfigured()
@@ -90,7 +97,7 @@ export async function POST(req: NextRequest) {
       try {
         // Step 1: extract brand / product info from the suspect photo.
         emit({ stage: 'extracting', message: 'Reading brand and product details from your photo…' })
-        const info = await extractProductInfo(parsed.base64, parsed.mimeType)
+        const info = await extractProductInfo(validated.base64, validated.mimeType)
         emit({
           stage: 'extracting',
           message: `Detected: ${[info.brand, info.productName, info.packSize].filter(Boolean).join(' — ') || 'no clear text found'}`,
@@ -114,7 +121,7 @@ export async function POST(req: NextRequest) {
             data: references,
           })
         } else {
-          // Step 3: web search for context (titles, snippets, official sites).
+          // Step 3: web search for context.
           emit({ stage: 'searching', message: `Searching the web for genuine references: "${searchQuery}"…` })
           const web = await runWebSearch(searchQuery, 6)
           const webHits = web.results ?? web.data ?? []
@@ -130,7 +137,6 @@ export async function POST(req: NextRequest) {
           references = toReferenceImages(img)
 
           if (references.length === 0) {
-            // Fallback: try a simpler query without the category hint.
             const simpler = [info.brand, info.productName].filter(Boolean).join(' ')
             if (simpler) {
               const retry = await runImageSearch(`${simpler} original packaging`, 6, 'us')
@@ -150,7 +156,6 @@ export async function POST(req: NextRequest) {
               data: references,
             })
 
-            // Step 5: cache the references (server-only write via service role).
             if (supabaseOn) {
               emit({ stage: 'caching', message: 'Caching references for faster future scans…' })
               await cacheReferences(brandKey, info.productName, references)
@@ -158,16 +163,14 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Step 6: VLM side-by-side comparison (or single-image fallback).
+        // Step 6: VLM side-by-side comparison.
         emit({ stage: 'comparing', message: 'Comparing your photo against the genuine reference(s)…' })
         let result: ScanResult
         if (references && references.length > 0) {
-          result = await runDeepCompare(parsed.base64, parsed.mimeType, references, effectiveCategory)
+          result = await runDeepCompare(validated.base64, validated.mimeType, references, effectiveCategory)
         } else {
-          // No references found — fall back to a single-image quick analysis.
           const { runQuickScan } = await import('@/lib/scan/ai')
-          result = await runQuickScan(parsed.base64, parsed.mimeType, effectiveCategory)
-          // Mark that this was a degraded result.
+          result = await runQuickScan(validated.base64, validated.mimeType, effectiveCategory)
           result.reasoning =
             `No genuine reference images were found online for this product, so a side-by-side comparison could not be performed. ${result.reasoning}`
         }
@@ -215,6 +218,7 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
+      ...rateLimitHeaders(limit),
     },
   })
 }

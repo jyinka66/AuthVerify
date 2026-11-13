@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { saveCommunityReport, ensureDevice } from '@/lib/scan/store-server'
 import { isSupabaseConfigured } from '@/lib/supabase/server'
+import { checkRateLimit, getClientIp, rateLimitHeaders, LIMITS } from '@/lib/scan/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -38,6 +39,17 @@ async function broadcastAlert(payload: {
 }
 
 export async function POST(req: NextRequest) {
+  // Rate limit — prevents spam reports.
+  const ip = getClientIp(req)
+  const deviceFp = req.headers.get('x-device-fingerprint') ?? 'anon'
+  const limit = checkRateLimit(deviceFp, ip, LIMITS.report)
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: 'Too many reports. Please try again later.' },
+      { status: 429, headers: rateLimitHeaders(limit) }
+    )
+  }
+
   let body: ReportBody
   try {
     body = (await req.json()) as ReportBody
