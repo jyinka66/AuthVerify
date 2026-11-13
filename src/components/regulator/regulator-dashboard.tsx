@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Shield, TrendingUp, MapPin, AlertTriangle, CheckCircle2, Loader2, Package } from 'lucide-react'
+import { Shield, TrendingUp, MapPin, AlertTriangle, CheckCircle2, Loader2, Package, Building2, BadgeCheck, XCircle } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -30,6 +30,19 @@ interface DashboardData {
   pendingReportCount?: number
 }
 
+interface PendingManufacturer {
+  id: string
+  company_name: string
+  country: string
+  contact_email: string
+  phone: string | null
+  regulatory_license_number: string | null
+  website: string | null
+  verified: boolean
+  created_at: string
+  productCount: number
+}
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -39,13 +52,19 @@ export function RegulatorDashboard({ open, onOpenChange }: Props) {
   const { toast } = useToast()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [pendingManufacturers, setPendingManufacturers] = useState<PendingManufacturer[]>([])
 
   useEffect(() => {
     if (!open) return
     setLoading(true)
-    fetch('/api/regulator/dashboard')
-      .then((r) => r.json())
-      .then((d) => setData(d))
+    Promise.all([
+      fetch('/api/regulator/dashboard').then((r) => r.json()),
+      fetch('/api/regulator/verify-manufacturer').then((r) => r.json()),
+    ])
+      .then(([d, mfgRes]) => {
+        setData(d)
+        setPendingManufacturers(mfgRes.manufacturers ?? [])
+      })
       .catch(() => toast({ title: 'Failed to load dashboard', variant: 'destructive' }))
       .finally(() => setLoading(false))
   }, [open, toast])
@@ -61,11 +80,32 @@ export function RegulatorDashboard({ open, onOpenChange }: Props) {
       toast({
         title: action === 'verify' ? 'Report verified' : 'Report dismissed',
       })
-      // Reload the dashboard.
       const fresh = await fetch('/api/regulator/dashboard').then((r) => r.json())
       setData(fresh)
     } catch {
       toast({ title: 'Moderation failed', variant: 'destructive' })
+    }
+  }
+
+  const handleVerifyManufacturer = async (manufacturerId: string, verified: boolean) => {
+    try {
+      const res = await fetch('/api/regulator/verify-manufacturer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manufacturerId, verified }),
+      })
+      if (!res.ok) throw new Error('Verification failed')
+      toast({
+        title: verified ? 'Manufacturer verified' : 'Manufacturer rejected',
+        description: verified
+          ? 'They now have the verified badge on their products.'
+          : 'Their products will show as unverified.',
+      })
+      // Refresh pending manufacturers.
+      const mfgRes = await fetch('/api/regulator/verify-manufacturer').then((r) => r.json())
+      setPendingManufacturers(mfgRes.manufacturers ?? [])
+    } catch {
+      toast({ title: 'Verification failed', variant: 'destructive' })
     }
   }
 
@@ -210,6 +250,44 @@ export function RegulatorDashboard({ open, onOpenChange }: Props) {
                 <div className="rounded-lg bg-zinc-900 p-6 text-center ring-1 ring-inset ring-zinc-800">
                   <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500/50" />
                   <p className="mt-2 text-sm text-zinc-400">No pending reports. The queue is clear.</p>
+                </div>
+              )}
+
+              {/* Manufacturer verification queue */}
+              {pendingManufacturers.length > 0 && (
+                <div className="rounded-lg bg-zinc-900 p-4 ring-1 ring-inset ring-zinc-800">
+                  <h4 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-200">
+                    <Building2 className="h-4 w-4 text-amber-400" />
+                    Manufacturer verification queue ({pendingManufacturers.length})
+                  </h4>
+                  <ul className="space-y-2">
+                    {pendingManufacturers.map((m) => (
+                      <li key={m.id} className="rounded-md bg-zinc-950/50 p-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-zinc-200">{m.company_name}</p>
+                            <p className="text-[11px] text-zinc-500">{m.country} · {m.productCount} product(s)</p>
+                            {m.regulatory_license_number && (
+                              <p className="text-[11px] text-zinc-600">License: {m.regulatory_license_number}</p>
+                            )}
+                            {m.website && (
+                              <a href={m.website} target="_blank" rel="noopener noreferrer" className="text-[11px] text-amber-400 hover:text-amber-300">
+                                {m.website}
+                              </a>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => handleVerifyManufacturer(m.id, true)} className="h-7 px-2 text-[11px] text-emerald-400 hover:bg-emerald-500/10">
+                              <BadgeCheck className="mr-0.5 h-3 w-3" /> Approve
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => handleVerifyManufacturer(m.id, false)} className="h-7 px-2 text-[11px] text-red-400 hover:bg-red-500/10">
+                              <XCircle className="mr-0.5 h-3 w-3" /> Reject
+                            </Button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>

@@ -3,6 +3,7 @@
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Volume2, VolumeX } from 'lucide-react'
 import type { ScanRecord, Verdict } from '@/lib/scan/types'
 import { FlagList } from './flag-list'
+import { VerifiedBadge } from '@/components/manufacturer/verified-badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
@@ -53,6 +54,16 @@ export function VerdictCard({ scan, onReport, onRescan }: Props) {
   const [readAloud, setReadAloud] = useState(false)
   const [speaking, setSpeaking] = useState(false)
 
+  // Detect if this scan was verified against manufacturer ground-truth data.
+  // The Deep Compare route prefixes the reasoning with this pattern.
+  const manufacturerMatch = scan.reasoning.match(
+    /^Verified against official manufacturer reference images(?: from (.+?))?\./
+  )
+  const manufacturerName = manufacturerMatch?.[1]
+  const cleanReasoning = manufacturerMatch
+    ? scan.reasoning.replace(/^Verified against official manufacturer reference images(?: from .+?)?\.\s*/, '')
+    : scan.reasoning
+
   useEffect(() => {
     if (!('speechSynthesis' in window)) return
     if (!readAloud) {
@@ -63,7 +74,7 @@ export function VerdictCard({ scan, onReport, onRescan }: Props) {
       return
     }
     const utter = new SpeechSynthesisUtterance(
-      `${meta.label}. Confidence ${scan.confidenceScore} percent. ${scan.reasoning}`
+      `${meta.label}. Confidence ${scan.confidenceScore} percent. ${cleanReasoning}`
     )
     utter.onend = () => { setSpeaking(false); setReadAloud(false) }
     utter.onerror = () => { setSpeaking(false); setReadAloud(false) }
@@ -73,7 +84,7 @@ export function VerdictCard({ scan, onReport, onRescan }: Props) {
     return () => {
       window.speechSynthesis.cancel()
     }
-  }, [readAloud, scan.reasoning, scan.confidenceScore, meta.label])
+  }, [readAloud, cleanReasoning, scan.confidenceScore, meta.label])
 
   const detected = [scan.brandDetected, scan.productNameDetected, scan.packSizeDetected]
     .filter(Boolean).join(' — ')
@@ -131,10 +142,15 @@ export function VerdictCard({ scan, onReport, onRescan }: Props) {
 
       {/* Reasoning */}
       <div className="rounded-xl bg-zinc-900 p-4 ring-1 ring-inset ring-zinc-800">
+        {manufacturerMatch && (
+          <div className="mb-2">
+            <VerifiedBadge name={manufacturerName} size="md" />
+          </div>
+        )}
         <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">
           Why this verdict
         </h3>
-        <p className="text-sm leading-relaxed text-zinc-200">{scan.reasoning}</p>
+        <p className="text-sm leading-relaxed text-zinc-200">{cleanReasoning}</p>
       </div>
 
       {/* Flags */}

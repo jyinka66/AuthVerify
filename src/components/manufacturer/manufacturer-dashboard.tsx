@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { Building2, Package, Plus, Loader2, CheckCircle2, Upload, Shield, BadgeCheck, Camera } from 'lucide-react'
+import { Building2, Package, Plus, Loader2, CheckCircle2, Upload, Shield, Camera } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { VerifiedBadge, UnverifiedBadge } from '@/components/manufacturer/verified-badge'
 import { PRODUCT_CATEGORIES } from '@/lib/scan/categories'
 import { useAuth } from '@/hooks/use-auth'
 import { useToast } from '@/hooks/use-toast'
@@ -208,11 +209,9 @@ export function ManufacturerDashboard({ open, onOpenChange }: Props) {
                             <p className="text-xs text-zinc-400">{manufacturer.country}</p>
                           </div>
                           {manufacturer.verified ? (
-                            <Badge className="bg-emerald-500/10 text-emerald-300 border-0">
-                              <BadgeCheck className="mr-1 h-3 w-3" /> Verified
-                            </Badge>
+                            <VerifiedBadge />
                           ) : (
-                            <Badge variant="outline" className="text-zinc-500 border-zinc-700">Pending verification</Badge>
+                            <UnverifiedBadge />
                           )}
                         </div>
                         <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
