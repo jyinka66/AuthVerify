@@ -1,6 +1,7 @@
 import ZAI from 'z-ai-web-dev-sdk'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { createHash } from 'crypto'
 import type {
   ProductCategory,
   ReferenceImage,
@@ -13,6 +14,8 @@ import {
   buildExtractionPrompt,
 } from './prompts'
 import { extractJson } from './json'
+import { lookupRegisteredProduct } from './manufacturer-store'
+import type { SecurityFeature, FakeIndicator } from './manufacturer-types'
 
 const execFileAsync = promisify(execFile)
 const CLI_BUFFER = 20 * 1024 * 1024 // 20MB — image search responses can be large
@@ -99,18 +102,21 @@ function extractFirstJson(stdout: string): string {
   return stdout.slice(start).trim()
 }
 
-/** Run `z-ai image-search` and return parsed JSON. */
+/** Run `z-ai image-search` and return parsed JSON (with retry + cost tracking). */
 export async function runImageSearch(
   query: string,
   count = 5,
   region = 'us'
 ): Promise<ImageSearchResult> {
   try {
-    const { stdout } = await execFileAsync(
-      'z-ai',
-      ['image-search', '-q', query, '-c', String(count), '--gl', region, '--no-rank'],
-      { maxBuffer: CLI_BUFFER, timeout: 120000 }
-    )
+    const { stdout } = await withRetry(async () => {
+      trackCost('image_search')
+      return execFileAsync(
+        'z-ai',
+        ['image-search', '-q', query, '-c', String(count), '--gl', region, '--no-rank'],
+        { maxBuffer: CLI_BUFFER, timeout: 120000 }
+      )
+    }, 'image-search')
     const json = extractFirstJson(stdout)
     return JSON.parse(json) as ImageSearchResult
   } catch (err) {
@@ -120,21 +126,21 @@ export async function runImageSearch(
   }
 }
 
-/** Run `z-ai function -n web_search` and return parsed JSON. */
+/** Run `z-ai function -n web_search` and return parsed JSON (with retry + cost tracking). */
 export async function runWebSearch(query: string, num = 6): Promise<WebSearchResult> {
   try {
-    const { stdout } = await execFileAsync(
-      'z-ai',
-      ['function', '-n', 'web_search', '-a', JSON.stringify({ query, num })],
-      { maxBuffer: CLI_BUFFER, timeout: 60000 }
-    )
+    const { stdout } = await withRetry(async () => {
+      trackCost('web_search')
+      return execFileAsync(
+        'z-ai',
+        ['function', '-n', 'web_search', '-a', JSON.stringify({ query, num })],
+        { maxBuffer: CLI_BUFFER, timeout: 60000 }
+      )
+    }, 'web-search')
     const json = extractFirstJson(stdout)
-    // The web_search CLI returns a raw JSON array of {url, name, snippet, host_name, rank, date}.
-    // Normalize to our WebSearchResult shape.
     const parsed = JSON.parse(json) as
       | Array<{ url?: string; name?: string; snippet?: string; host_name?: string }>
       | WebSearchResult
-
     if (Array.isArray(parsed)) {
       return {
         success: true,
@@ -204,35 +210,155 @@ export function toReferenceImages(hit: ImageSearchResult): ReferenceImage[] {
 }
 
 // ---------------------------------------------------------------------------
-// VLM calls via SDK
+// Retry wrapper + circuit breaker
 // ---------------------------------------------------------------------------
 
-/** Quick Scan: single-frame authenticity analysis. */
+const MAX_RETRIES = 3
+const circuitState = { failures: 0, trippedUntil: 0 }
+
+/** Check if the AI circuit breaker is tripped (too many consecutive failures). */
+export function isCircuitTripped(): boolean {
+  return Date.now() < circuitState.trippedUntil
+}
+
+/** Reset the circuit breaker after a successful call. */
+function recordSuccess() {
+  circuitState.failures = 0
+  circuitState.trippedUntil = 0
+}
+
+/** Record a failure and trip the breaker after MAX_RETRIES consecutive failures. */
+function recordFailure() {
+  circuitState.failures++
+  if (circuitState.failures >= MAX_RETRIES) {
+    // Trip for 60 seconds.
+    circuitState.trippedUntil = Date.now() + 60_000
+    console.error('[ai] circuit breaker tripped for 60s after', circuitState.failures, 'failures')
+  }
+}
+
+/** Retry wrapper with exponential backoff. */
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  if (isCircuitTripped()) {
+    throw new Error('AI service temporarily unavailable (circuit breaker tripped). Try again in a minute.')
+  }
+  let lastError: unknown
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await fn()
+      recordSuccess()
+      return result
+    } catch (err) {
+      lastError = err
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[ai] ${label} attempt ${attempt}/${MAX_RETRIES} failed:`, msg)
+      if (attempt < MAX_RETRIES) {
+        const backoff = Math.min(1000 * 2 ** (attempt - 1), 8000)
+        await new Promise((r) => setTimeout(r, backoff))
+      }
+    }
+  }
+  recordFailure()
+  throw lastError instanceof Error ? lastError : new Error(`${label} failed after ${MAX_RETRIES} retries`)
+}
+
+// ---------------------------------------------------------------------------
+// VLM response caching (content-hash based)
+// ---------------------------------------------------------------------------
+
+const vlmCache = new Map<string, { result: ScanResult; expiresAt: number }>()
+const VLM_CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours in-memory
+
+function vlmCacheKey(imageBase64: string, prompt: string): string {
+  return createHash('sha256').update(imageBase64).update(prompt).digest('hex').slice(0, 32)
+}
+
+function getCachedVlm(key: string): ScanResult | null {
+  const entry = vlmCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiresAt) {
+    vlmCache.delete(key)
+    return null
+  }
+  return entry.result
+}
+
+function setCachedVlm(key: string, result: ScanResult) {
+  if (vlmCache.size > 500) {
+    // Evict oldest entries when cache grows too large.
+    const now = Date.now()
+    for (const [k, v] of vlmCache) {
+      if (now > v.expiresAt) vlmCache.delete(k)
+    }
+  }
+  vlmCache.set(key, { result, expiresAt: Date.now() + VLM_CACHE_TTL_MS })
+}
+
+// ---------------------------------------------------------------------------
+// Cost tracking (estimated, per call)
+// ---------------------------------------------------------------------------
+
+const COST_PER_VLM_CALL = 0.02 // estimated USD per VLM call
+const COST_PER_WEB_SEARCH = 0.005
+const COST_PER_IMAGE_SEARCH = 0.01
+
+let totalEstimatedCost = 0
+
+export function getEstimatedCost(): number {
+  return totalEstimatedCost
+}
+
+function trackCost(service: 'vlm' | 'web_search' | 'image_search' | 'llm', count = 1) {
+  const costs = {
+    vlm: COST_PER_VLM_CALL,
+    web_search: COST_PER_WEB_SEARCH,
+    image_search: COST_PER_IMAGE_SEARCH,
+    llm: COST_PER_VLM_CALL,
+  }
+  totalEstimatedCost += costs[service] * count
+}
+
+// ---------------------------------------------------------------------------
+// VLM calls via SDK (with retry + caching)
+// ---------------------------------------------------------------------------
+
+/** Quick Scan: single-frame authenticity analysis (with caching + retry). */
 export async function runQuickScan(
   imageBase64: string,
   mimeType: string,
   category: ProductCategory | null
 ): Promise<ScanResult> {
-  const zai = await getZai()
   const prompt = buildQuickScanPrompt(category)
+  const cacheKey = vlmCacheKey(imageBase64, prompt)
+  const cached = getCachedVlm(cacheKey)
+  if (cached) {
+    console.log('[ai] quick scan cache hit')
+    return cached
+  }
+
+  const zai = await getZai()
   const dataUrl = `data:${mimeType};base64,${imageBase64}`
 
-  const response = await zai.chat.completions.createVision({
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: dataUrl } },
-        ],
-      },
-    ],
-    thinking: { type: 'disabled' },
-  })
+  const response = await withRetry(async () => {
+    trackCost('vlm')
+    return zai.chat.completions.createVision({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      thinking: { type: 'disabled' },
+    })
+  }, 'quick-scan-vlm')
 
   const content = response.choices[0]?.message?.content ?? ''
-  const parsed = extractJson<ScanResult>(content)
-  return normalizeResult(parsed)
+  const parsed = normalizeResult(extractJson<ScanResult>(content))
+  setCachedVlm(cacheKey, parsed)
+  return parsed
 }
 
 /** Deep Compare step 1: extract brand/product from the suspect photo. */
@@ -252,18 +378,21 @@ export async function extractProductInfo(
   const prompt = buildExtractionPrompt()
   const dataUrl = `data:${mimeType};base64,${imageBase64}`
 
-  const response = await zai.chat.completions.createVision({
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: dataUrl } },
-        ],
-      },
-    ],
-    thinking: { type: 'disabled' },
-  })
+  const response = await withRetry(async () => {
+    trackCost('vlm')
+    return zai.chat.completions.createVision({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      thinking: { type: 'disabled' },
+    })
+  }, 'extract-product-info')
 
   const content = response.choices[0]?.message?.content ?? ''
   try {
@@ -286,15 +415,29 @@ export async function extractProductInfo(
   }
 }
 
-/** Deep Compare final step: side-by-side comparison against reference images. */
+/** Deep Compare final step: side-by-side comparison against reference images (with retry + caching). */
 export async function runDeepCompare(
   suspectImageBase64: string,
   mimeType: string,
   references: ReferenceImage[],
-  category: ProductCategory | null
+  category: ProductCategory | null,
+  manufacturerSecurityFeatures?: SecurityFeature[],
+  manufacturerFakeIndicators?: FakeIndicator[]
 ): Promise<ScanResult> {
+  const prompt = buildDeepComparePrompt(
+    category,
+    references.length,
+    manufacturerSecurityFeatures,
+    manufacturerFakeIndicators
+  )
+  const cacheKey = vlmCacheKey(suspectImageBase64, prompt)
+  const cached = getCachedVlm(cacheKey)
+  if (cached) {
+    console.log('[ai] deep compare cache hit')
+    return { ...cached, referenceImages: references }
+  }
+
   const zai = await getZai()
-  const prompt = buildDeepComparePrompt(category, references.length)
   const suspectDataUrl = `data:${mimeType};base64,${suspectImageBase64}`
 
   const content: Array<
@@ -309,15 +452,75 @@ export async function runDeepCompare(
     })),
   ]
 
-  const response = await zai.chat.completions.createVision({
-    messages: [{ role: 'user', content }],
-    thinking: { type: 'disabled' },
-  })
+  const response = await withRetry(async () => {
+    trackCost('vlm')
+    return zai.chat.completions.createVision({
+      messages: [{ role: 'user', content }],
+      thinking: { type: 'disabled' },
+    })
+  }, 'deep-compare-vlm')
 
   const raw = response.choices[0]?.message?.content ?? ''
   const parsed = extractJson<ScanResult & { comparisonNotes?: string[] }>(raw)
   const result = normalizeResult(parsed)
-  return { ...result, referenceImages: references }
+  const finalResult = { ...result, referenceImages: references }
+  setCachedVlm(cacheKey, result)
+  return finalResult
+}
+
+// ---------------------------------------------------------------------------
+// Manufacturer-registry-aware reference lookup
+// ---------------------------------------------------------------------------
+
+export interface ManufacturerReferences {
+  found: boolean
+  references: ReferenceImage[]
+  securityFeatures: SecurityFeature[]
+  fakeIndicators: FakeIndicator[]
+  manufacturerName?: string
+  manufacturerVerified?: boolean
+}
+
+/**
+ * Check the manufacturer registry for ground-truth reference images.
+ * Called by the Deep Compare flow BEFORE web search — manufacturer data
+ * is preferred (it's official ground truth, not web-scraped guesses).
+ */
+export async function lookupManufacturerReferences(
+  brand?: string | null,
+  barcode?: string | null
+): Promise<ManufacturerReferences> {
+  try {
+    const lookup = await lookupRegisteredProduct(brand, barcode)
+    if (!lookup.found || lookup.referenceImages.length === 0) {
+      return {
+        found: false,
+        references: [],
+        securityFeatures: [],
+        fakeIndicators: [],
+      }
+    }
+    // Convert manufacturer reference images to the ReferenceImage format
+    // with the highest credibility score (manufacturer = ground truth).
+    const references: ReferenceImage[] = lookup.referenceImages.map((img) => ({
+      imageUrl: img.imageUrl,
+      sourceUrl: img.imageUrl,
+      sourceType: 'manufacturer' as ReferenceSourceType,
+      credibilityScore: 100, // manufacturer data is the highest-trust source
+      caption: img.caption || `Manufacturer official reference (${img.angle || 'product'})`,
+    }))
+    return {
+      found: true,
+      references,
+      securityFeatures: lookup.securityFeatures,
+      fakeIndicators: lookup.knownFakeIndicators,
+      manufacturerName: lookup.manufacturer?.companyName,
+      manufacturerVerified: lookup.manufacturer?.verified,
+    }
+  } catch (err) {
+    console.error('[ai] manufacturer lookup failed:', err)
+    return { found: false, references: [], securityFeatures: [], fakeIndicators: [] }
+  }
 }
 
 // ---------------------------------------------------------------------------

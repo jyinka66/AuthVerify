@@ -58,18 +58,37 @@ Rules:
 /**
  * VLM system prompt for Deep Compare (suspect photo vs. genuine reference images).
  * The suspect photo is the FIRST image; reference images follow.
+ * When manufacturer-provided security features are available, they are
+ * included as explicit check items (ground truth from the brand owner).
  */
-export function buildDeepComparePrompt(categoryId: ProductCategory | null, referenceCount: number): string {
+export function buildDeepComparePrompt(
+  categoryId: ProductCategory | null,
+  referenceCount: number,
+  manufacturerSecurityFeatures?: Array<{ feature: string; location: string; description: string }>,
+  manufacturerFakeIndicators?: Array<{ indicator: string; description: string }>
+): string {
   const meta = categoryId ? getCategoryMeta(categoryId) : null
   const categoryContext = meta
     ? `Product category: ${meta.label}. ${meta.description}.`
     : 'Product category: unknown.'
 
+  const securityFeaturesSection = manufacturerSecurityFeatures && manufacturerSecurityFeatures.length > 0
+    ? `\n\nThe manufacturer has specified these official security features to verify. Check each one explicitly:\n${manufacturerSecurityFeatures.map((f, i) => `${i + 1}. ${f.feature} at ${f.location}: ${f.description}`).join('\n')}\n\nIf ALL listed security features are present and correct, this strongly indicates authenticity. If ANY are missing or incorrect, this strongly indicates counterfeit.`
+    : ''
+
+  const fakeIndicatorsSection = manufacturerFakeIndicators && manufacturerFakeIndicators.length > 0
+    ? `\n\nThe manufacturer has reported these known counterfeit indicators. Check for each one:\n${manufacturerFakeIndicators.map((f, i) => `${i + 1}. ${f.indicator}: ${f.description}`).join('\n')}\n\nIf ANY of these counterfeit indicators are present, this strongly indicates counterfeit.`
+    : ''
+
+  const trustNote = (manufacturerSecurityFeatures?.length || manufacturerFakeIndicators?.length)
+    ? '\n\nIMPORTANT: The reference images and security features for this comparison were provided directly by the product manufacturer (ground truth), not web-scraped. This is the highest-trust verification source.'
+    : ''
+
   return `You are a counterfeit product detection expert comparing a SUSPECTED product against GENUINE reference images.
 
 ${categoryContext}
 
-The FIRST image is the user's suspected product. The following ${referenceCount} image(s) are genuine reference images sourced from the web (manufacturer sites, retailers, regulatory databases, marketplaces).
+The FIRST image is the user's suspected product. The following ${referenceCount} image(s) are genuine reference images${manufacturerSecurityFeatures?.length ? ' provided by the product manufacturer (official ground truth)' : ' sourced from the web (manufacturer sites, retailers, regulatory databases, marketplaces)'}.
 
 For each reference image, identify specific differences between the suspect and the genuine reference:
 - Brand logo (shape, color, position, print quality)
@@ -81,6 +100,7 @@ For each reference image, identify specific differences between the suspect and 
 - Seal / packaging integrity
 - Batch / serial number format
 - Any spelling differences
+${securityFeaturesSection}${fakeIndicatorsSection}${trustNote}
 
 Return a STRICT JSON object with EXACTLY this shape (no markdown, no extra text):
 {

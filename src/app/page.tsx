@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug, Bell, Info } from 'lucide-react'
+import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug, Bell, Info, Building2 } from 'lucide-react'
 import { CameraView } from '@/components/scan/camera-view'
 import { PhotoCapture } from '@/components/scan/photo-capture'
 import { CategoryPicker } from '@/components/scan/category-picker'
@@ -16,6 +16,7 @@ import { ScannerWizard } from '@/components/hardware/scanner-wizard'
 import { AlertsFeed } from '@/components/scan/alerts-feed'
 import { AuthButton } from '@/components/auth/auth-button'
 import { LegalDialog } from '@/components/legal/legal-dialog'
+import { ManufacturerDashboard } from '@/components/manufacturer/manufacturer-dashboard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -65,6 +66,7 @@ export default function Home() {
   // Community counterfeit alerts (real-time via socket.io).
   const [alertsOpen, setAlertsOpen] = useState(false)
   const [legalOpen, setLegalOpen] = useState(false)
+  const [manufacturerOpen, setManufacturerOpen] = useState(false)
   const { connected: alertsConnected, alerts, dismissAlert, clearAlerts } = useCommunityAlerts(region)
 
   // Deep Compare SSE progress.
@@ -326,6 +328,16 @@ export default function Home() {
           <Button
             variant="ghost"
             size="icon"
+            onClick={() => setManufacturerOpen(true)}
+            className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            aria-label="Manufacturer portal"
+            title="Manufacturer portal — register your company and products"
+          >
+            <Building2 className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setScannerWizardOpen(true)}
             className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
             aria-label="Connect hardware scanner"
@@ -576,6 +588,9 @@ export default function Home() {
 
       {/* Legal & privacy dialog */}
       <LegalDialog open={legalOpen} onOpenChange={setLegalOpen} />
+
+      {/* Manufacturer portal */}
+      <ManufacturerDashboard open={manufacturerOpen} onOpenChange={setManufacturerOpen} />
     </div>
   )
 }

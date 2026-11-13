@@ -5,7 +5,9 @@ import {
   toReferenceImages,
   extractProductInfo,
   runDeepCompare,
+  lookupManufacturerReferences,
   type ExtractedInfo,
+  type ManufacturerReferences,
 } from '@/lib/scan/ai'
 import { ensureDevice, saveScan, getCachedReferences, cacheReferences } from '@/lib/scan/store-server'
 import { isSupabaseConfigured } from '@/lib/supabase/server'
@@ -108,66 +110,97 @@ export async function POST(req: NextRequest) {
         const searchQuery = buildSearchQuery(info, effectiveCategory)
         const brandKey = (info.brand ?? 'unknown').trim()
 
-        // Step 2: check reference cache.
-        emit({ stage: 'cache_check', message: 'Checking cached genuine references…' })
+        // Step 2: check manufacturer registry FIRST (ground truth, preferred over web search).
+        emit({ stage: 'cache_check', message: 'Checking the manufacturer registry for official reference images…' })
+        const manufacturerRefs = await lookupManufacturerReferences(info.brand, undefined)
+
         let references: ReferenceImage[] | null = null
-        if (supabaseOn) {
-          references = await getCachedReferences(brandKey, info.productName ?? undefined)
-        }
-        if (references && references.length > 0) {
+        let manufacturerSecurityFeatures: ManufacturerReferences['securityFeatures'] = []
+        let manufacturerFakeIndicators: ManufacturerReferences['fakeIndicators'] = []
+        let usingManufacturerData = false
+
+        if (manufacturerRefs.found && manufacturerRefs.references.length > 0) {
+          references = manufacturerRefs.references
+          manufacturerSecurityFeatures = manufacturerRefs.securityFeatures
+          manufacturerFakeIndicators = manufacturerRefs.fakeIndicators
+          usingManufacturerData = true
           emit({
             stage: 'references_found',
-            message: `Found ${references.length} cached genuine reference image(s).`,
+            message: `Found ${references.length} official reference image(s) from ${manufacturerRefs.manufacturerName || 'the manufacturer'} (ground truth).${manufacturerRefs.manufacturerVerified ? ' Manufacturer verified.' : ''}`,
             data: references,
           })
         } else {
-          // Step 3: web search for context.
-          emit({ stage: 'searching', message: `Searching the web for genuine references: "${searchQuery}"…` })
-          const web = await runWebSearch(searchQuery, 6)
-          const webHits = web.results ?? web.data ?? []
-          emit({
-            stage: 'searching',
-            message: `Web search returned ${webHits.length} result(s).`,
-            data: webHits.slice(0, 3),
-          })
-
-          // Step 4: image search for genuine reference images.
-          emit({ stage: 'searching', message: 'Fetching genuine reference images from the web…' })
-          const img = await runImageSearch(searchQuery, 6, 'us')
-          references = toReferenceImages(img)
-
-          if (references.length === 0) {
-            const simpler = [info.brand, info.productName].filter(Boolean).join(' ')
-            if (simpler) {
-              const retry = await runImageSearch(`${simpler} original packaging`, 6, 'us')
-              references = toReferenceImages(retry)
-            }
+          // Step 3: check the web-reference cache (for previously web-searched products).
+          emit({ stage: 'cache_check', message: 'Checking cached web references…' })
+          if (supabaseOn) {
+            references = await getCachedReferences(brandKey, info.productName ?? undefined)
           }
-
-          if (references.length === 0) {
-            emit({
-              stage: 'comparing',
-              message: 'No genuine reference images found online. Falling back to single-image authenticity analysis.',
-            })
-          } else {
+          if (references && references.length > 0) {
             emit({
               stage: 'references_found',
-              message: `Found ${references.length} genuine reference image(s) from the web.`,
+              message: `Found ${references.length} cached genuine reference image(s).`,
               data: references,
             })
+          } else {
+            // Step 4: web search for context.
+            emit({ stage: 'searching', message: `Searching the web for genuine references: "${searchQuery}"…` })
+            const web = await runWebSearch(searchQuery, 6)
+            const webHits = web.results ?? web.data ?? []
+            emit({
+              stage: 'searching',
+              message: `Web search returned ${webHits.length} result(s).`,
+              data: webHits.slice(0, 3),
+            })
 
-            if (supabaseOn) {
-              emit({ stage: 'caching', message: 'Caching references for faster future scans…' })
-              await cacheReferences(brandKey, info.productName, references)
+            // Step 5: image search for genuine reference images.
+            emit({ stage: 'searching', message: 'Fetching genuine reference images from the web…' })
+            const img = await runImageSearch(searchQuery, 6, 'us')
+            references = toReferenceImages(img)
+
+            if (references.length === 0) {
+              const simpler = [info.brand, info.productName].filter(Boolean).join(' ')
+              if (simpler) {
+                const retry = await runImageSearch(`${simpler} original packaging`, 6, 'us')
+                references = toReferenceImages(retry)
+              }
+            }
+
+            if (references.length === 0) {
+              emit({
+                stage: 'comparing',
+                message: 'No genuine reference images found online. Falling back to single-image authenticity analysis.',
+              })
+            } else {
+              emit({
+                stage: 'references_found',
+                message: `Found ${references.length} genuine reference image(s) from the web.`,
+                data: references,
+              })
+
+              if (supabaseOn) {
+                emit({ stage: 'caching', message: 'Caching references for faster future scans…' })
+                await cacheReferences(brandKey, info.productName, references)
+              }
             }
           }
         }
 
         // Step 6: VLM side-by-side comparison.
-        emit({ stage: 'comparing', message: 'Comparing your photo against the genuine reference(s)…' })
+        const sourceLabel = usingManufacturerData ? 'manufacturer official reference(s)' : 'genuine reference(s)'
+        emit({ stage: 'comparing', message: `Comparing your photo against the ${sourceLabel}…` })
         let result: ScanResult
         if (references && references.length > 0) {
-          result = await runDeepCompare(validated.base64, validated.mimeType, references, effectiveCategory)
+          result = await runDeepCompare(
+            validated.base64,
+            validated.mimeType,
+            references,
+            effectiveCategory,
+            manufacturerSecurityFeatures,
+            manufacturerFakeIndicators
+          )
+          if (usingManufacturerData) {
+            result.reasoning = `Verified against official manufacturer reference images${manufacturerRefs.manufacturerName ? ` from ${manufacturerRefs.manufacturerName}` : ''}. ${result.reasoning}`
+          }
         } else {
           const { runQuickScan } = await import('@/lib/scan/ai')
           result = await runQuickScan(validated.base64, validated.mimeType, effectiveCategory)
