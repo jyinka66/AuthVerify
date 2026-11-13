@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug, Bell, Info, Building2, Shield } from 'lucide-react'
+import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Bell, Info, Building2, Shield } from 'lucide-react'
 import { CameraView } from '@/components/scan/camera-view'
 import { PhotoCapture } from '@/components/scan/photo-capture'
 import { CategoryPicker } from '@/components/scan/category-picker'
@@ -12,7 +12,6 @@ import { ScanHistory } from '@/components/scan/scan-history'
 import { CommunityReportForm } from '@/components/scan/community-report-form'
 import { BarcodeScanner } from '@/components/scan/barcode-scanner'
 import { BarcodeResultSheet } from '@/components/scan/barcode-result-sheet'
-import { ScannerWizard } from '@/components/hardware/scanner-wizard'
 import { AlertsFeed } from '@/components/scan/alerts-feed'
 import { AuthButton } from '@/components/auth/auth-button'
 import { LegalDialog } from '@/components/legal/legal-dialog'
@@ -54,10 +53,8 @@ export default function Home() {
   const [reportOpen, setReportOpen] = useState(false)
   const [usingLocalStore, setUsingLocalStore] = useState(false)
 
-  // Barcode scanner (camera) + hardware scanner wizard.
+  // Barcode scanner (camera) + barcode lookup.
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false)
-  const [scannerWizardOpen, setScannerWizardOpen] = useState(false)
-  const [hardwareConnected, setHardwareConnected] = useState(false)
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null)
   const [barcodeSheetOpen, setBarcodeSheetOpen] = useState(false)
   const [barcodeLookup, setBarcodeLookup] = useState<{
@@ -315,12 +312,6 @@ export default function Home() {
     resetToCapture()
   }
 
-  // Track hardware scanner connection status for the header badge.
-  const handleHardwareScan = (code: string) => {
-    setHardwareConnected(true)
-    handleBarcodeScan(code)
-  }
-
   const analyzing = screen === 'analyzing'
   const showProgress = mode === 'deep' && analyzing && deepProgress
 
@@ -377,15 +368,6 @@ export default function Home() {
               Local
             </span>
           )}
-          {hardwareConnected && (
-            <span
-              className="hidden items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300 sm:flex"
-              title="Hardware barcode scanner connected"
-            >
-              <Plug className="h-3 w-3" />
-              Scanner
-            </span>
-          )}
           <ConnectivityIndicator online={online} queuedCount={queuedCount} processing={processing} />
           <AuthButton />
           <Button
@@ -407,16 +389,6 @@ export default function Home() {
             title="Regulator dashboard — counterfeit hotspots and report moderation"
           >
             <Shield className="h-5 w-5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setScannerWizardOpen(true)}
-            className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
-            aria-label="Connect hardware scanner"
-            title="Connect a USB or Bluetooth barcode scanner"
-          >
-            <Plug className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -631,13 +603,6 @@ export default function Home() {
         open={barcodeScannerOpen}
         onOpenChange={setBarcodeScannerOpen}
         onScan={handleBarcodeScan}
-      />
-
-      {/* Hardware scanner wizard (USB / Type-C / Bluetooth) */}
-      <ScannerWizard
-        open={scannerWizardOpen}
-        onOpenChange={setScannerWizardOpen}
-        onScan={handleHardwareScan}
       />
 
       {/* Barcode lookup result sheet */}
