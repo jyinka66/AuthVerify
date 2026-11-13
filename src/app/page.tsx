@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug, Bell, Info, Building2 } from 'lucide-react'
+import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Plug, Bell, Info, Building2, Shield } from 'lucide-react'
 import { CameraView } from '@/components/scan/camera-view'
 import { PhotoCapture } from '@/components/scan/photo-capture'
 import { CategoryPicker } from '@/components/scan/category-picker'
@@ -17,6 +17,8 @@ import { AlertsFeed } from '@/components/scan/alerts-feed'
 import { AuthButton } from '@/components/auth/auth-button'
 import { LegalDialog } from '@/components/legal/legal-dialog'
 import { ManufacturerDashboard } from '@/components/manufacturer/manufacturer-dashboard'
+import { RegulatorDashboard } from '@/components/regulator/regulator-dashboard'
+import { ConnectivityIndicator } from '@/components/scan/connectivity-indicator'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -28,7 +30,9 @@ import type {
 import { quickScan, deepCompare, listHistory, deleteScan, lookupProduct, type ProductLookupResponse } from '@/lib/scan/api-client'
 import { listLocalScans, saveLocalScan, deleteLocalScan, isUsingLocalStore } from '@/lib/scan/store-local'
 import { getDeviceFingerprint, detectRegion } from '@/lib/scan/device'
+import { queueScan, requestBackgroundSync } from '@/lib/scan/offline-queue'
 import { useCommunityAlerts } from '@/hooks/use-community-alerts'
+import { useConnectivity } from '@/hooks/use-connectivity'
 import { useToast } from '@/hooks/use-toast'
 
 type Screen = 'capture' | 'analyzing' | 'result'
@@ -67,7 +71,17 @@ export default function Home() {
   const [alertsOpen, setAlertsOpen] = useState(false)
   const [legalOpen, setLegalOpen] = useState(false)
   const [manufacturerOpen, setManufacturerOpen] = useState(false)
+  const [regulatorOpen, setRegulatorOpen] = useState(false)
   const { connected: alertsConnected, alerts, dismissAlert, clearAlerts } = useCommunityAlerts(region)
+
+  // Connectivity + offline scan queue.
+  const { online, queuedCount, processing, lastProcessedScan } = useConnectivity((record) => {
+    setResult(record)
+    setScreen('result')
+    setHistory((prev) => [record, ...prev].slice(0, 50))
+    saveLocalScan(record)
+    toast({ title: 'Offline scan completed', description: 'Your queued scan has been processed.' })
+  })
 
   // Deep Compare SSE progress.
   const [deepProgress, setDeepProgress] = useState<DeepCompareProgress | null>(null)
@@ -127,9 +141,28 @@ export default function Home() {
     resetToCapture()
   }
 
-  // --- Quick Scan: capture frame + immediately send to API ---
+  // --- Quick Scan: capture frame + immediately send to API (or queue if offline) ---
   const handleQuickCapture = async (imageDataUrl: string) => {
     setCapturedImage(imageDataUrl)
+
+    // Offline: queue the scan for processing when connectivity returns.
+    if (!navigator.onLine) {
+      queueScan({
+        mode: 'quick',
+        category,
+        image: imageDataUrl,
+        deviceFingerprint,
+        region,
+      })
+      await requestBackgroundSync()
+      toast({
+        title: 'Scan queued',
+        description: 'You are offline. The scan will process automatically when you reconnect.',
+      })
+      setCapturedImage(null)
+      return
+    }
+
     setScreen('analyzing')
     try {
       const res = await quickScan({
@@ -144,6 +177,15 @@ export default function Home() {
       if (res.usingLocalStore) saveLocalScan(res.scan)
       setScreen('result')
     } catch (err) {
+      // If the network drops mid-request, queue it for retry.
+      if (!navigator.onLine) {
+        queueScan({ mode: 'quick', category, image: imageDataUrl, deviceFingerprint, region })
+        await requestBackgroundSync()
+        toast({ title: 'Scan queued', description: 'Network dropped — will retry when online.' })
+        setCapturedImage(null)
+        setScreen('capture')
+        return
+      }
       toast({
         title: 'Scan failed',
         description: err instanceof Error ? err.message : 'Please try again.',
@@ -153,9 +195,29 @@ export default function Home() {
     }
   }
 
-  // --- Deep Compare: send photo, stream SSE progress ---
+  // --- Deep Compare: send photo, stream SSE progress (or queue if offline) ---
   const handleDeepCompare = async () => {
     if (!capturedImage) return
+
+    // Offline: queue for processing when connectivity returns.
+    if (!navigator.onLine) {
+      queueScan({
+        mode: 'deep',
+        category,
+        image: capturedImage,
+        deviceFingerprint,
+        region,
+      })
+      await requestBackgroundSync()
+      toast({
+        title: 'Scan queued',
+        description: 'You are offline. Deep Compare will run automatically when you reconnect.',
+      })
+      setCapturedImage(null)
+      setScreen('capture')
+      return
+    }
+
     setScreen('analyzing')
     setDeepProgress({ stage: 'extracting', message: 'Starting verification…' })
     setVisibleStages(new Set(['extracting']))
@@ -324,6 +386,7 @@ export default function Home() {
               Scanner
             </span>
           )}
+          <ConnectivityIndicator online={online} queuedCount={queuedCount} processing={processing} />
           <AuthButton />
           <Button
             variant="ghost"
@@ -334,6 +397,16 @@ export default function Home() {
             title="Manufacturer portal — register your company and products"
           >
             <Building2 className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setRegulatorOpen(true)}
+            className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            aria-label="Regulator dashboard"
+            title="Regulator dashboard — counterfeit hotspots and report moderation"
+          >
+            <Shield className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -591,6 +664,9 @@ export default function Home() {
 
       {/* Manufacturer portal */}
       <ManufacturerDashboard open={manufacturerOpen} onOpenChange={setManufacturerOpen} />
+
+      {/* Regulator dashboard */}
+      <RegulatorDashboard open={regulatorOpen} onOpenChange={setRegulatorOpen} />
     </div>
   )
 }
