@@ -103,10 +103,11 @@ export async function POST(
 
   const imageUrl = urlData.publicUrl
 
-  // Create the reference image record.
+  // Create the reference image record (include the storage path for management/deletion).
   const imageId = await addProductReferenceImage({
     productId,
     imageUrl,
+    storagePath: filePath,
     angle: body.angle,
     caption: body.caption,
   })

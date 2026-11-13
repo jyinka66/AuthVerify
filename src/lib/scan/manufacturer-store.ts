@@ -204,6 +204,7 @@ export async function createManufacturerProduct(params: {
 export async function addProductReferenceImage(params: {
   productId: string
   imageUrl: string
+  storagePath?: string
   angle?: string
   caption?: string
 }): Promise<string | null> {
@@ -215,6 +216,7 @@ export async function addProductReferenceImage(params: {
     .insert({
       product_id: params.productId,
       image_url: params.imageUrl,
+      storage_path: params.storagePath ?? null,
       angle: params.angle ?? 'other',
       caption: params.caption ?? null,
     })

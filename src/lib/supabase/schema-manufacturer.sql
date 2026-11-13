@@ -93,6 +93,18 @@ create table if not exists public.verdict_feedback (
 );
 create index if not exists feedback_scan_idx on public.verdict_feedback (scan_id);
 
+-- Web Push subscriptions (for sending counterfeit alert push notifications)
+create table if not exists public.push_subscriptions (
+  id uuid primary key default uuid_generate_v4(),
+  endpoint text unique not null,
+  p256dh_key text not null,
+  auth_key text not null,
+  device_id uuid references public.devices(id) on delete set null,
+  region text,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subs_region_idx on public.push_subscriptions (region);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
@@ -175,3 +187,11 @@ create policy "feedback read all" on public.verdict_feedback
   for select using (true);
 create policy "feedback insert own" on public.verdict_feedback
   for insert with check (true);
+
+-- push_subscriptions: readable via service role only, writable by any client (subscription is public).
+create policy "push_subs insert any" on public.push_subscriptions
+  for insert with check (true);
+create policy "push_subs delete own" on public.push_subscriptions
+  for delete using (true);
+create policy "push_subs update own" on public.push_subscriptions
+  for update using (true) with check (true);

@@ -24,20 +24,15 @@ export async function GET(req: NextRequest) {
   const supabase = createServiceRoleClient()
   if (!supabase) return NextResponse.json({ configured: false })
 
-  // Scan verdict breakdown.
-  const { data: verdictBreakdown } = await supabase.rpc('count_verdicts').catch(() => ({ data: null }))
-  // Fallback if RPC doesn't exist — query directly.
-  let verdictCounts = verdictBreakdown
-  if (!verdictCounts) {
-    const { data: scans } = await supabase
-      .from('scans')
-      .select('verdict')
-    const counts = { likely_authentic: 0, high_risk_counterfeit: 0, inconclusive: 0 }
-    for (const s of scans ?? []) {
-      if (s.verdict in counts) counts[s.verdict as keyof typeof counts]++
-    }
-    verdictCounts = Object.entries(counts).map(([verdict, count]) => ({ verdict, count }))
+  // Scan verdict breakdown (direct query — no RPC needed).
+  const { data: scans } = await supabase
+    .from('scans')
+    .select('verdict')
+  const counts = { likely_authentic: 0, high_risk_counterfeit: 0, inconclusive: 0 }
+  for (const s of scans ?? []) {
+    if (s.verdict in counts) counts[s.verdict as keyof typeof counts]++
   }
+  const verdictCounts = Object.entries(counts).map(([verdict, count]) => ({ verdict, count }))
 
   // Top reported brands (from community reports).
   const { data: topBrands } = await supabase

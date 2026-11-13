@@ -34,10 +34,21 @@ export function usePushNotifications() {
       setPermission(permission)
       if (permission !== 'granted') return
 
+      // VAPID public key — required for push subscriptions to work.
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+      if (!vapidPublicKey) {
+        console.error('[push] NEXT_PUBLIC_VAPID_PUBLIC_KEY not set — push notifications disabled')
+        return
+      }
+
+      // Convert the base64 VAPID key to a Uint8Array for the pushManager API.
+      const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey)
+
       const reg = await navigator.serviceWorker.ready
       const existing = await reg.pushManager.getSubscription()
       const subscription = existing ?? await reg.pushManager.subscribe({
         userVisibleOnly: true,
+        applicationServerKey,
       })
 
       // POST the subscription to the server.
@@ -65,4 +76,16 @@ export function usePushNotifications() {
   }
 
   return { supported, permission, subscribed, subscribe }
+}
+
+/** Convert a base64 URL string to a Uint8Array (for the PushManager applicationServerKey parameter). */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const rawData = atob(base64)
+  const output = new Uint8Array(rawData.length)
+  for (let i = 0; i < rawData.length; ++i) {
+    output[i] = rawData.charCodeAt(i)
+  }
+  return output
 }

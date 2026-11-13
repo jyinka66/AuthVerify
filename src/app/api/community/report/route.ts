@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { saveCommunityReport, ensureDevice } from '@/lib/scan/store-server'
 import { isSupabaseConfigured } from '@/lib/supabase/server'
 import { checkRateLimit, getClientIp, rateLimitHeaders, LIMITS } from '@/lib/scan/rate-limit'
+import { sendPushAlert } from '@/lib/scan/push-sender'
 
 export const runtime = 'nodejs'
 
@@ -69,6 +70,17 @@ export async function POST(req: NextRequest) {
     region: body.region,
     details: body.details?.trim() || undefined,
   })
+
+  // Also send web push notifications to subscribed devices in the region.
+  // This runs in the background — failures don't block the response.
+  sendPushAlert(
+    {
+      title: 'Counterfeit alert nearby',
+      body: `${body.brand.trim()}${body.productName ? ` — ${body.productName.trim()}` : ''} was reported as fake${body.region ? ` in ${body.region}` : ''}.`,
+      tag: 'counterfeit-alert',
+    },
+    body.region
+  ).catch((err) => console.error('[community/report] push failed:', err))
 
   if (!isSupabaseConfigured()) {
     return NextResponse.json({

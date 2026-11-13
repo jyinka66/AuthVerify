@@ -16,6 +16,7 @@ import {
 import { extractJson } from './json'
 import { lookupRegisteredProduct } from './manufacturer-store'
 import type { SecurityFeature, FakeIndicator } from './manufacturer-types'
+import { createServiceRoleClient } from '@/lib/supabase/server'
 
 const execFileAsync = promisify(execFile)
 const CLI_BUFFER = 20 * 1024 * 1024 // 20MB — image search responses can be large
@@ -285,13 +286,43 @@ function getCachedVlm(key: string): ScanResult | null {
 
 function setCachedVlm(key: string, result: ScanResult) {
   if (vlmCache.size > 500) {
-    // Evict oldest entries when cache grows too large.
     const now = Date.now()
     for (const [k, v] of vlmCache) {
       if (now > v.expiresAt) vlmCache.delete(k)
     }
   }
   vlmCache.set(key, { result, expiresAt: Date.now() + VLM_CACHE_TTL_MS })
+
+  // Also persist to the vlm_cache table for cross-instance sharing (fire-and-forget).
+  const supabase = createServiceRoleClient()
+  if (supabase) {
+    supabase.from('vlm_cache').upsert({
+      hash: key,
+      result_json: result,
+      prompt_version: 'v1',
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    }).then(undefined, () => {})
+  }
+}
+
+/** Check the Supabase vlm_cache table for a persistent cache hit (cross-instance). */
+async function getDbCachedVlm(key: string): Promise<ScanResult | null> {
+  const supabase = createServiceRoleClient()
+  if (!supabase) return null
+  try {
+    const { data } = await supabase
+      .from('vlm_cache')
+      .select('result_json')
+      .eq('hash', key)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle()
+    if (data?.result_json) {
+      return data.result_json as unknown as ScanResult
+    }
+  } catch {
+    // Table might not exist yet — ignore.
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +346,17 @@ function trackCost(service: 'vlm' | 'web_search' | 'image_search' | 'llm', count
     image_search: COST_PER_IMAGE_SEARCH,
     llm: COST_PER_VLM_CALL,
   }
-  totalEstimatedCost += costs[service] * count
+  const cost = costs[service] * count
+  totalEstimatedCost += cost
+
+  // Persist to the cost_log table (fire-and-forget, non-blocking).
+  const supabase = createServiceRoleClient()
+  if (supabase) {
+    supabase.from('cost_log').insert({
+      service,
+      estimated_cost_usd: cost,
+    }).then(undefined, () => {})
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -332,8 +373,16 @@ export async function runQuickScan(
   const cacheKey = vlmCacheKey(imageBase64, prompt)
   const cached = getCachedVlm(cacheKey)
   if (cached) {
-    console.log('[ai] quick scan cache hit')
+    console.log('[ai] quick scan cache hit (memory)')
     return cached
+  }
+
+  // Check the database cache (cross-instance sharing).
+  const dbCached = await getDbCachedVlm(cacheKey)
+  if (dbCached) {
+    console.log('[ai] quick scan cache hit (database)')
+    setCachedVlm(cacheKey, dbCached) // populate in-memory cache
+    return dbCached
   }
 
   const zai = await getZai()
@@ -433,8 +482,16 @@ export async function runDeepCompare(
   const cacheKey = vlmCacheKey(suspectImageBase64, prompt)
   const cached = getCachedVlm(cacheKey)
   if (cached) {
-    console.log('[ai] deep compare cache hit')
+    console.log('[ai] deep compare cache hit (memory)')
     return { ...cached, referenceImages: references }
+  }
+
+  // Check the database cache (cross-instance sharing).
+  const dbCached = await getDbCachedVlm(cacheKey)
+  if (dbCached) {
+    console.log('[ai] deep compare cache hit (database)')
+    setCachedVlm(cacheKey, dbCached)
+    return { ...dbCached, referenceImages: references }
   }
 
   const zai = await getZai()
