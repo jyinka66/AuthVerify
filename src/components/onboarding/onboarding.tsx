@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ShieldCheck, ScanLine, AlertTriangle, ArrowRight, X } from 'lucide-react'
+import { ShieldCheck, ScanLine, Users, ArrowRight, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -28,10 +28,10 @@ const SLIDES: Slide[] = [
     accent: 'text-emerald-400',
   },
   {
-    icon: AlertTriangle,
-    title: 'Honest, not perfect',
-    body: 'AuthVerify gives preliminary assessments, not guarantees. Some counterfeits are visually identical to genuine products. For authoritative verification, contact your regulator (NAFDAC, FDA, etc.). Always use your judgment.',
-    accent: 'text-red-400',
+    icon: Users,
+    title: 'Protect your community',
+    body: 'When you spot a fake, report it. Other users nearby get alerted instantly. Together we can push counterfeits out of the market — every report makes the app smarter for everyone.',
+    accent: 'text-emerald-400',
   },
 ]
 
