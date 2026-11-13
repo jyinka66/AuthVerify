@@ -18,6 +18,9 @@ import { LegalDialog } from '@/components/legal/legal-dialog'
 import { ManufacturerDashboard } from '@/components/manufacturer/manufacturer-dashboard'
 import { RegulatorDashboard } from '@/components/regulator/regulator-dashboard'
 import { ConnectivityIndicator } from '@/components/scan/connectivity-indicator'
+import { FeedbackWidget } from '@/components/scan/feedback-widget'
+import { PushNotificationToggle } from '@/components/scan/push-notification-toggle'
+import { Onboarding } from '@/components/onboarding/onboarding'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -369,6 +372,7 @@ export default function Home() {
             </span>
           )}
           <ConnectivityIndicator online={online} queuedCount={queuedCount} processing={processing} />
+          <PushNotificationToggle />
           <AuthButton />
           <Button
             variant="ghost"
@@ -529,6 +533,10 @@ export default function Home() {
                 onRescan={resetToCapture}
               />
 
+              {screen === 'result' && result && (
+                <FeedbackWidget scanId={result.id} deviceFingerprint={deviceFingerprint} />
+              )}
+
               {mode === 'deep' && result.referenceImages && result.referenceImages.length > 0 && (
                 <ComparisonCard
                   suspectImage={capturedImage ?? undefined}
@@ -632,6 +640,9 @@ export default function Home() {
 
       {/* Regulator dashboard */}
       <RegulatorDashboard open={regulatorOpen} onOpenChange={setRegulatorOpen} />
+
+      {/* First-time onboarding */}
+      <Onboarding />
     </div>
   )
 }

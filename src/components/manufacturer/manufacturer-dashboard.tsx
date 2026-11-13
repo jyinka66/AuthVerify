@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Building2, Package, Plus, Loader2, CheckCircle2, Upload, Shield, BadgeCheck } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
+import { Building2, Package, Plus, Loader2, CheckCircle2, Upload, Shield, BadgeCheck, Camera } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -85,6 +85,40 @@ export function ManufacturerDashboard({ open, onOpenChange }: Props) {
   const [securityFeatures, setSecurityFeatures] = useState<SecurityFeature[]>([{ feature: '', location: '', description: '' }])
   const [fakeIndicators, setFakeIndicators] = useState<FakeIndicator[]>([{ indicator: '', description: '' }])
   const [addingProduct, setAddingProduct] = useState(false)
+
+  // Product image upload state.
+  const [uploadingTo, setUploadingTo] = useState<string | null>(null)
+  const [uploadAngle, setUploadAngle] = useState('front')
+  const [uploadPreview, setUploadPreview] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleImageUpload = async (productId: string) => {
+    if (!uploadPreview) return
+    setUploading(true)
+    try {
+      const res = await fetch(`/api/manufacturer/product/${productId}/images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: uploadPreview, angle: uploadAngle }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Upload failed')
+      toast({ title: 'Reference image uploaded', description: 'This image will be used as ground truth for verification.' })
+      setUploadPreview(null)
+      setUploadingTo(null)
+    } catch (err) {
+      toast({ title: 'Upload failed', description: err instanceof Error ? err.message : 'Try again.', variant: 'destructive' })
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const readFileAsDataUrl = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => { if (typeof reader.result === 'string') setUploadPreview(reader.result) }
+    reader.readAsDataURL(file)
+  }
 
   const handleAddProduct = async () => {
     if (!productForm.productName || !productForm.brand) {
@@ -251,6 +285,55 @@ export function ManufacturerDashboard({ open, onOpenChange }: Props) {
                               {p.knownFakeIndicators.length > 0 && <span>{p.knownFakeIndicators.length} fake indicators</span>}
                             </div>
                           )}
+                          <div className="mt-2 border-t border-zinc-800 pt-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => { setUploadingTo(p.id); setUploadPreview(null) }}
+                              className="text-xs text-amber-400 hover:bg-amber-500/10"
+                            >
+                              <Upload className="mr-1 h-3 w-3" /> Upload reference images
+                            </Button>
+                            {uploadingTo === p.id && (
+                              <div className="mt-2 space-y-2 rounded-md bg-zinc-950/50 p-2">
+                                <p className="text-[11px] text-zinc-500">Upload official product photos — these become the ground truth for Deep Compare verification.</p>
+                                <div className="flex gap-2">
+                                  <select
+                                    value={uploadAngle}
+                                    onChange={(e) => setUploadAngle(e.target.value)}
+                                    className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-100"
+                                  >
+                                    <option value="front">Front</option>
+                                    <option value="back">Back</option>
+                                    <option value="side">Side</option>
+                                    <option value="top">Top</option>
+                                    <option value="detail">Detail</option>
+                                    <option value="other">Other</option>
+                                  </select>
+                                  <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} className="border-zinc-700 bg-zinc-900 text-zinc-100">
+                                    <Camera className="mr-1 h-3 w-3" /> Choose photo
+                                  </Button>
+                                  <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    className="hidden"
+                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) readFileAsDataUrl(f); e.target.value = '' }}
+                                  />
+                                </div>
+                                {uploadPreview && (
+                                  <div className="space-y-2">
+                                    <img src={uploadPreview} alt="Preview" className="max-h-32 rounded-md object-cover" />
+                                    <Button size="sm" onClick={() => handleImageUpload(p.id)} disabled={uploading} className="bg-amber-500 text-zinc-950 hover:bg-amber-400">
+                                      {uploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Upload className="mr-1 h-3 w-3" />}
+                                      {uploading ? 'Uploading...' : 'Upload'}
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ))
                     )}
