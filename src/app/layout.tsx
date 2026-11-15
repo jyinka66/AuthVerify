@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { I18nProvider } from "@/lib/i18n";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -58,7 +59,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         <ErrorBoundary>
-          {children}
+          <I18nProvider>
+            {children}
+          </I18nProvider>
         </ErrorBoundary>
         <Toaster />
         <ServiceWorkerRegister />

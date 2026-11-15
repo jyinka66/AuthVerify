@@ -5,6 +5,7 @@ import { saveLocalScan } from '@/lib/scan/store-local'
 import { isSupabaseConfigured } from '@/lib/supabase/server'
 import { checkRateLimit, getClientIp, rateLimitHeaders, LIMITS } from '@/lib/scan/rate-limit'
 import { validateAndSanitizeImage, ImageValidationError } from '@/lib/scan/image-validation'
+import { checkBudgetAlerts } from '@/lib/scan/budget-alert'
 import type { ProductCategory, ScanRecord } from '@/lib/scan/types'
 import { randomUUID } from 'crypto'
 
@@ -33,6 +34,9 @@ export async function POST(req: NextRequest) {
       { status: 429, headers: rateLimitHeaders(limit) }
     )
   }
+
+  // Check budget thresholds (fire-and-forget — logs warnings at 80%/90%).
+  checkBudgetAlerts().catch(() => {})
 
   let body: QuickScanBody
   try {

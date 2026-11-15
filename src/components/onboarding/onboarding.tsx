@@ -4,39 +4,34 @@ import { useEffect, useState } from 'react'
 import { ShieldCheck, ScanLine, Users, ArrowRight, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useT } from '@/lib/i18n'
 
 const ONBOARDING_KEY = 'authverify_onboarded'
 
-interface Slide {
-  icon: React.ComponentType<{ className?: string }>
-  title: string
-  body: string
-  accent: string
-}
-
-const SLIDES: Slide[] = [
+const SLIDES: Array<{ icon: React.ComponentType<{ className?: string }>; titleKey: string; bodyKey: string; accent: string }> = [
   {
     icon: ShieldCheck,
-    title: 'Verify any product in seconds',
-    body: 'Point your camera at a medicine, cosmetic, beverage, or any branded product. AuthVerify checks for counterfeit red flags using AI vision analysis.',
+    titleKey: 'onboarding.verifyTitle',
+    bodyKey: 'onboarding.verifyBody',
     accent: 'text-amber-400',
   },
   {
     icon: ScanLine,
-    title: 'Two ways to check',
-    body: 'Quick Scan analyzes your photo instantly. Deep Compare searches the web for genuine reference images and compares your photo side-by-side with the real thing.',
+    titleKey: 'onboarding.twoWaysTitle',
+    bodyKey: 'onboarding.twoWaysBody',
     accent: 'text-emerald-400',
   },
   {
     icon: Users,
-    title: 'Protect your community',
-    body: 'When you spot a fake, report it. Other users nearby get alerted instantly. Together we can push counterfeits out of the market — every report makes the app smarter for everyone.',
+    titleKey: 'onboarding.communityTitle',
+    bodyKey: 'onboarding.communityBody',
     accent: 'text-emerald-400',
   },
 ]
 
 export function Onboarding() {
   const [slide, setSlide] = useState(0)
+  const t = useT()
 
   // Check if already onboarded (client-only).
   const [dismissed, setDismissed] = useState(false)
@@ -73,7 +68,7 @@ export function Onboarding() {
       <button
         onClick={handleSkip}
         className="absolute right-4 top-4 z-10 rounded-full p-2 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300"
-        aria-label="Skip onboarding"
+        aria-label={t('onboarding.skip')}
       >
         <X className="h-5 w-5" />
       </button>
@@ -83,8 +78,8 @@ export function Onboarding() {
         <div className="mb-6 rounded-2xl bg-zinc-900 p-6 ring-1 ring-inset ring-zinc-800">
           <Icon className={cn('h-12 w-12', current.accent)} />
         </div>
-        <h2 className="mb-3 text-xl font-bold text-zinc-100">{current.title}</h2>
-        <p className="max-w-sm text-sm leading-relaxed text-zinc-400">{current.body}</p>
+        <h2 className="mb-3 text-xl font-bold text-zinc-100">{t(current.titleKey)}</h2>
+        <p className="max-w-sm text-sm leading-relaxed text-zinc-400">{t(current.bodyKey)}</p>
       </div>
 
       {/* Progress dots */}
@@ -107,7 +102,7 @@ export function Onboarding() {
           className="w-full bg-amber-500 text-zinc-950 hover:bg-amber-400"
           size="lg"
         >
-          {isLast ? 'Start scanning' : 'Next'}
+          {isLast ? t('onboarding.startScanning') : t('onboarding.next')}
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>

@@ -21,6 +21,8 @@ import { ConnectivityIndicator } from '@/components/scan/connectivity-indicator'
 import { FeedbackWidget } from '@/components/scan/feedback-widget'
 import { PushNotificationToggle } from '@/components/scan/push-notification-toggle'
 import { Onboarding } from '@/components/onboarding/onboarding'
+import { LocaleSwitcher } from '@/components/i18n/locale-switcher'
+import { useT } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -41,6 +43,7 @@ type Screen = 'capture' | 'analyzing' | 'result'
 
 export default function Home() {
   const { toast } = useToast()
+  const t = useT()
 
   // Device identity (declared early — region feeds the alerts hook).
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>('anon')
@@ -372,6 +375,7 @@ export default function Home() {
             </span>
           )}
           <ConnectivityIndicator online={online} queuedCount={queuedCount} processing={processing} />
+          <LocaleSwitcher />
           <PushNotificationToggle />
           <AuthButton />
           <Button
@@ -379,8 +383,8 @@ export default function Home() {
             size="icon"
             onClick={() => setManufacturerOpen(true)}
             className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
-            aria-label="Manufacturer portal"
-            title="Manufacturer portal — register your company and products"
+            aria-label={t('header.manufacturerPortal')}
+            title={t('header.manufacturerPortal')}
           >
             <Building2 className="h-5 w-5" />
           </Button>
@@ -389,8 +393,8 @@ export default function Home() {
             size="icon"
             onClick={() => setRegulatorOpen(true)}
             className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
-            aria-label="Regulator dashboard"
-            title="Regulator dashboard — counterfeit hotspots and report moderation"
+            aria-label={t('header.regulatorDashboard')}
+            title={t('header.regulatorDashboard')}
           >
             <Shield className="h-5 w-5" />
           </Button>
@@ -399,8 +403,8 @@ export default function Home() {
             size="icon"
             onClick={() => setBarcodeScannerOpen(true)}
             className="text-zinc-300 hover:bg-zinc-900 hover:text-white"
-            aria-label="Scan barcode with camera"
-            title="Scan a product barcode with your camera"
+            aria-label={t('header.scanBarcode')}
+            title={t('header.scanBarcode')}
           >
             <Barcode className="h-5 w-5" />
           </Button>
@@ -455,7 +459,7 @@ export default function Home() {
             )}
           >
             <ScanLine className="h-3.5 w-3.5" />
-            Quick Scan
+            {t('mode.quickScan')}
           </button>
           <button
             onClick={() => switchMode('deep')}
@@ -465,7 +469,7 @@ export default function Home() {
             )}
           >
             <GitCompareArrows className="h-3.5 w-3.5" />
-            Deep Compare
+            {t('mode.deepCompare')}
           </button>
         </div>
       </div>
@@ -563,7 +567,7 @@ export default function Home() {
           ) : mode === 'quick' ? (
             <div className="flex w-full items-center justify-center gap-1.5 text-xs text-zinc-500">
               <AlertCircle className="h-3.5 w-3.5" />
-              Center the product, then tap the amber button below
+              {t('footer.howToScan')}
             </div>
           ) : (
             <Button
