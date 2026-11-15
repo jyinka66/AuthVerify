@@ -3,6 +3,7 @@ import { saveCommunityReport, ensureDevice } from '@/lib/scan/store-server'
 import { isSupabaseConfigured } from '@/lib/supabase/server'
 import { checkRateLimit, getClientIp, rateLimitHeaders, LIMITS } from '@/lib/scan/rate-limit'
 import { sendPushAlert } from '@/lib/scan/push-sender'
+import { sanitizeText } from '@/lib/scan/sanitize'
 
 export const runtime = 'nodejs'
 
@@ -62,21 +63,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Brand is required' }, { status: 400 })
   }
 
+  // Sanitize all text inputs (XSS prevention).
+  body.brand = sanitizeText(body.brand, 'brand')
+  body.productName = body.productName ? sanitizeText(body.productName, 'productName') : undefined
+  body.details = body.details ? sanitizeText(body.details, 'details') : undefined
+
   // Always broadcast the alert (even if Supabase isn't configured) so that
   // connected clients in the same region see real-time alerts.
   await broadcastAlert({
-    brand: body.brand.trim(),
-    productName: body.productName?.trim() || undefined,
+    brand: body.brand,
+    productName: body.productName || undefined,
     region: body.region,
-    details: body.details?.trim() || undefined,
+    details: body.details || undefined,
   })
 
   // Also send web push notifications to subscribed devices in the region.
-  // This runs in the background — failures don't block the response.
   sendPushAlert(
     {
       title: 'Counterfeit alert nearby',
-      body: `${body.brand.trim()}${body.productName ? ` — ${body.productName.trim()}` : ''} was reported as fake${body.region ? ` in ${body.region}` : ''}.`,
+      body: `${body.brand}${body.productName ? ` — ${body.productName}` : ''} was reported as fake${body.region ? ` in ${body.region}` : ''}.`,
       tag: 'counterfeit-alert',
     },
     body.region

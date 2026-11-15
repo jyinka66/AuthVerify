@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { ScanLine, GitCompareArrows, ScanSearch, History, ShieldCheck, Loader2, AlertCircle, Database, Barcode, Bell, Info, Building2, Shield } from 'lucide-react'
 import { CameraView } from '@/components/scan/camera-view'
 import { PhotoCapture } from '@/components/scan/photo-capture'
@@ -10,7 +11,6 @@ import { ComparisonCard } from '@/components/scan/comparison-card'
 import { ProgressOverlay } from '@/components/scan/progress-overlay'
 import { ScanHistory } from '@/components/scan/scan-history'
 import { CommunityReportForm } from '@/components/scan/community-report-form'
-import { BarcodeScanner } from '@/components/scan/barcode-scanner'
 import { BarcodeResultSheet } from '@/components/scan/barcode-result-sheet'
 import { AlertsFeed } from '@/components/scan/alerts-feed'
 import { AuthButton } from '@/components/auth/auth-button'
@@ -38,6 +38,12 @@ import { queueScan, requestBackgroundSync } from '@/lib/scan/offline-queue'
 import { useCommunityAlerts } from '@/hooks/use-community-alerts'
 import { useConnectivity } from '@/hooks/use-connectivity'
 import { useToast } from '@/hooks/use-toast'
+
+// Lazy-load the BarcodeScanner — ZXing is ~200KB and only needed when scanning barcodes.
+const BarcodeScanner = dynamic(
+  () => import('@/components/scan/barcode-scanner').then(m => m.BarcodeScanner),
+  { ssr: false, loading: () => null }
+)
 
 type Screen = 'capture' | 'analyzing' | 'result'
 

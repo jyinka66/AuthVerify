@@ -51,10 +51,23 @@ interface VerifyBody {
  * POST /api/regulator/verify-manufacturer
  *
  * Approves (verified=true) or rejects (verified=false) a manufacturer.
- * In production, this should be protected so only admin/regulator users
- * can call it. For now, it requires the service role key (server-side).
+ * Protected by an admin API key — the request must include an
+ * `x-admin-key` header matching the ADMIN_API_KEY env var.
+ * In production with Supabase Auth, this should also check for an
+ * admin role on the authenticated user.
  */
 export async function POST(req: NextRequest) {
+  // Admin auth check.
+  const adminKey = process.env.ADMIN_API_KEY
+  if (adminKey) {
+    const providedKey = req.headers.get('x-admin-key')
+    if (providedKey !== adminKey) {
+      return NextResponse.json({ error: 'Unauthorized — admin key required' }, { status: 403 })
+    }
+  }
+  // If ADMIN_API_KEY is not set, the endpoint is open (dev mode only).
+  // In production, always set ADMIN_API_KEY.
+
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: 'Supabase not configured.' }, { status: 503 })
   }
